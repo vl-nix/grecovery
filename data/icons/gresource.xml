@@ -1,0 +1,13 @@
+<gresources>
+  <gresource prefix="/gres">
+    <file preprocess="to-pixdata">info.png</file>
+    <file preprocess="to-pixdata">close.png</file>
+    <file preprocess="to-pixdata">image.png</file>
+    <file preprocess="to-pixdata">folder.png</file>
+    <file preprocess="to-pixdata">search.png</file>
+    <file preprocess="to-pixdata">recovery.png</file>
+    <file preprocess="to-pixdata">apply.png</file>
+    <file preprocess="to-pixdata">clear.png</file>
+    <file preprocess="to-pixdata">reload.png</file>
+  </gresource>
+</gresources>
