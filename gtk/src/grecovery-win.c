@@ -27,11 +27,17 @@ struct _GRecoveryWin
 
 	GtkEntry *entry_save;
 	GtkTreeView *treeview;
+	GtkTreeView *treeview_file;
 	GtkTreeSelection *selection;
 
 	GtkComboBoxText *combo_disk;
 	GtkComboBoxText *combo_type;
 	GtkComboBoxText *combo_whole;
+
+	GtkSwitch *gswitch;
+	GtkButton *button_rec;
+	GtkTreeViewColumn *column_sector;
+	GtkTreeViewColumn *column_toggled;
 
 	GtkLabel *prg_label;
 	GtkProgressBar *prg_bar;
@@ -75,7 +81,7 @@ static void grecovery_win_about ( GtkWindow *window )
 	gtk_about_dialog_set_authors ( dialog, authors );
 	gtk_about_dialog_set_website ( dialog,   "https://github.com/vl-nix/grecovery" );
 	gtk_about_dialog_set_copyright ( dialog, "Copyright 2021 GRecovery" );
-	gtk_about_dialog_set_comments  ( dialog, "Data Recovery Utility\nBase in PhotoRec" );
+	gtk_about_dialog_set_comments  ( dialog, "Data Recovery Utility\nBased in PhotoRec" );
 
 	gtk_dialog_run ( GTK_DIALOG (dialog) );
 	gtk_widget_destroy ( GTK_WIDGET (dialog) );
@@ -123,17 +129,23 @@ static void grecovery_win_search ( GRecoveryWin *win )
 	if ( dir && !g_file_test ( dir, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_DIR ) )
 		{ grecovery_win_message_dialog ( "Dir not found.", dir, GTK_MESSAGE_WARNING, GTK_WINDOW ( win ) ); return; }
 
-	gtk_label_set_text ( win->prg_label, " " );
-	gtk_progress_bar_set_fraction ( win->prg_bar, 0 );
+	if ( gtk_widget_get_sensitive ( GTK_WIDGET ( win->combo_disk ) ) )
+	{
+		gtk_label_set_text ( win->prg_label, " " );
+		gtk_progress_bar_set_fraction ( win->prg_bar, 0 );
+		gtk_list_store_clear ( GTK_LIST_STORE ( gtk_tree_view_get_model ( win->treeview_file ) ) );
+	}
 
 	gtk_widget_set_sensitive ( GTK_WIDGET ( win->combo_disk  ), FALSE );
 	gtk_widget_set_sensitive ( GTK_WIDGET ( win->treeview    ), FALSE );
 	gtk_widget_set_sensitive ( GTK_WIDGET ( win->combo_type  ), FALSE );
 	gtk_widget_set_sensitive ( GTK_WIDGET ( win->combo_whole ), FALSE );
 
+	gboolean search_only = gtk_switch_get_state ( win->gswitch );
+
 	win->src_update = g_timeout_add ( 250, (GSourceFunc)grecovery_win_timeout_update, win );
 
-	recovery_search ( type, whole, dir, GTK_WINDOW ( win ), win->recovery );
+	recovery_search ( type, whole, dir, search_only, GTK_WINDOW ( win ), win->recovery );
 }
 
 static char * grecovery_win_file_open ( const char *path, const char *accept, const char *icon, uint8_t num, GtkWindow *window )
@@ -232,8 +244,8 @@ static GtkScrolledWindow * grecovery_win_create_treeview_scroll ( GRecoveryWin *
 
 	struct Column { const char *name; const char *type; uint8_t num; } column_n[] =
 	{
-		{ "Num",     "text",   COL_NUM },
-		{ "Flags",   "text",   COL_FLG },
+		{ "O",       "text",   COL_NUM },
+		{ "F",       "text",   COL_FLG },
 		{ "Type",    "text",   COL_FTP },
 		{ "System",  "text",   COL_SYS },
 		{ "Size",    "text",   COL_FSZ },
@@ -255,6 +267,127 @@ static GtkScrolledWindow * grecovery_win_create_treeview_scroll ( GRecoveryWin *
 	win->part_signal_id = g_signal_connect ( win->selection, "changed", G_CALLBACK ( grecovery_win_signal_tree_part_changed ), win );
 
 	return scroll;
+}
+
+static void grecovery_win_treeview_file_append ( uint ind, gboolean set, const char *file, uint64_t sz, uint64_t sector, GRecoveryWin *win )
+{
+	GtkTreeIter iter;
+	GtkTreeModel *model = gtk_tree_view_get_model ( win->treeview_file );
+
+	char path_str[24];
+	sprintf ( path_str, "%u", ind );
+
+	if ( gtk_tree_model_get_iter_from_string ( model, &iter, path_str ) )
+	{
+		gtk_list_store_set    ( GTK_LIST_STORE ( model ), &iter, 0, ind + 1, 1, set, 2, file, 3, sz, 4, sector, -1 );
+	}
+	else
+	{
+		gtk_list_store_append ( GTK_LIST_STORE ( model ), &iter );
+		gtk_list_store_set    ( GTK_LIST_STORE ( model ), &iter, 0, ind + 1, 1, set, 2, file, 3, sz, 4, sector, -1 );
+	}
+}
+
+static void grecovery_win_click_sector ( G_GNUC_UNUSED GtkButton *button, GRecoveryWin *win )
+{
+	GtkTreeIter iter;
+	GtkTreeModel *model = gtk_tree_view_get_model ( win->treeview_file );
+
+	gboolean valid = FALSE;
+	for ( valid = gtk_tree_model_get_iter_first ( model, &iter ); valid; valid = gtk_tree_model_iter_next ( model, &iter ) )
+	{
+		gboolean toggle_item;
+		gtk_tree_model_get ( model, &iter, 1, &toggle_item, -1 );
+
+		if ( toggle_item )
+		{
+			uint ind = 0;
+			char *file = NULL;
+			uint64_t sz = 0, sector = 0;
+
+			gtk_tree_model_get ( model, &iter, 0, &ind, 2, &file, 3, &sz, 4, &sector, -1 );
+
+			recovery_file_sector ( ind-1, file, sz, sector, win->recovery );
+
+			free ( file );
+		}
+	}
+}
+
+static void grecovery_win_toggled ( G_GNUC_UNUSED GtkCellRendererToggle *toggle, char *path_str, GRecoveryWin *win )
+{
+	GtkTreeIter iter;
+	GtkTreeModel *model = gtk_tree_view_get_model ( win->treeview_file );
+
+	GtkTreePath *path = gtk_tree_path_new_from_string ( path_str );
+	gtk_tree_model_get_iter ( model, &iter, path );
+
+	gboolean toggle_item;
+	gtk_tree_model_get ( model, &iter, 1, &toggle_item, -1 );
+	gtk_list_store_set ( GTK_LIST_STORE ( model ), &iter, 1, !toggle_item, -1 );
+
+	gtk_tree_path_free ( path );
+}
+
+static GtkBox * grecovery_win_create_treeview_file_scroll ( GRecoveryWin *win )
+{
+	GtkBox *v_box = (GtkBox *)gtk_box_new ( GTK_ORIENTATION_VERTICAL,   0 );
+	GtkBox *h_box = (GtkBox *)gtk_box_new ( GTK_ORIENTATION_HORIZONTAL, 0 );
+
+	gtk_widget_set_visible ( GTK_WIDGET ( v_box ), TRUE );
+	gtk_widget_set_visible ( GTK_WIDGET ( h_box ), TRUE );
+
+	GtkScrolledWindow *scroll = (GtkScrolledWindow *)gtk_scrolled_window_new ( NULL, NULL );
+	gtk_scrolled_window_set_min_content_height ( scroll, 150 );
+	gtk_scrolled_window_set_policy ( scroll, GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC );
+	gtk_widget_set_visible ( GTK_WIDGET ( scroll ), TRUE );
+
+	GtkListStore *store = gtk_list_store_new ( 5, G_TYPE_UINT, G_TYPE_BOOLEAN, G_TYPE_STRING, G_TYPE_UINT64, G_TYPE_UINT64 );
+
+	win->treeview_file = (GtkTreeView *)gtk_tree_view_new_with_model ( GTK_TREE_MODEL ( store ) );
+	gtk_widget_set_visible ( GTK_WIDGET ( win->treeview_file ), TRUE );
+
+	GtkCellRenderer *renderer;
+	GtkTreeViewColumn *column;
+
+	struct Column { const char *name; const char *type; uint8_t num; } column_n[] =
+	{
+		{ "Num",     "text",   0 },
+		{ "Set",   "active",   1 },
+		{ "File",    "text",   2 },
+		{ "Size",    "text",   3 },
+		{ "Sector",  "text",   4 }
+	};
+
+	uint8_t c = 0; for ( c = 0; c < 5; c++ )
+	{
+		if ( c == 1 )
+			renderer = gtk_cell_renderer_toggle_new ();
+		else
+			renderer = gtk_cell_renderer_text_new ();
+
+		if ( c == 1 ) g_signal_connect ( renderer, "toggled", G_CALLBACK ( grecovery_win_toggled ), win );
+
+		column = gtk_tree_view_column_new_with_attributes ( column_n[c].name, renderer, column_n[c].type, column_n[c].num, NULL );
+		gtk_tree_view_append_column ( win->treeview_file, column );
+
+		if ( c == 1 ) { win->column_toggled = column; gtk_tree_view_column_set_visible ( column, FALSE ); }
+		if ( c == 4 ) { win->column_sector  = column; gtk_tree_view_column_set_visible ( column, FALSE ); }
+	}
+
+	gtk_container_add ( GTK_CONTAINER ( scroll ), GTK_WIDGET ( win->treeview_file ) );
+	g_object_unref ( G_OBJECT (store) );
+
+	win->button_rec = (GtkButton *)gtk_button_new_with_label ( "Recovery" );
+	gtk_widget_set_visible ( GTK_WIDGET ( win->button_rec ), FALSE );
+	g_signal_connect ( win->button_rec, "clicked", G_CALLBACK ( grecovery_win_click_sector ), win );
+
+	gtk_box_pack_start ( h_box, GTK_WIDGET ( win->button_rec ), TRUE, TRUE, 0 );
+
+	gtk_box_pack_start ( v_box, GTK_WIDGET ( scroll ), FALSE, FALSE, 0 );
+	gtk_box_pack_end ( v_box, GTK_WIDGET ( h_box ), FALSE, FALSE, 0 );
+
+	return v_box;
 }
 
 static void grecovery_win_srch ( G_GNUC_UNUSED GtkButton *button, GRecoveryWin *win )
@@ -315,6 +448,27 @@ static GtkComboBoxText * grecovery_win_create_combo ( const char *text_a, const 
 	return combo;
 }
 
+static void grecovery_win_switch_active ( GObject *gobject, G_GNUC_UNUSED GParamSpec *pspec, GRecoveryWin *win )
+{
+	gboolean state = gtk_switch_get_state ( GTK_SWITCH ( gobject ) );
+
+	gtk_tree_view_column_set_visible ( win->column_toggled, state );
+	gtk_tree_view_column_set_visible ( win->column_sector,  state );
+}
+
+static void grecovery_win_expander_expanded ( GtkExpander *expander, G_GNUC_UNUSED GParamSpec *pspec, GRecoveryWin *win )
+{
+	gtk_widget_set_visible ( GTK_WIDGET ( win->gswitch ), !gtk_expander_get_expanded ( expander ) );
+	gtk_widget_set_visible ( GTK_WIDGET ( win->button_rec ), gtk_switch_get_state ( win->gswitch ) );
+}
+
+static void grecovery_win_handler_set_file ( Recovery *recovery, uint8_t num, const char *file, uint64_t sz, uint64_t sector, GRecoveryWin *win )
+{
+	g_autofree char *name = g_path_get_basename ( file );
+
+	grecovery_win_treeview_file_append ( num, FALSE, name, sz, sector, win );
+}
+
 static void grecovery_win_create ( GRecoveryWin *win )
 {
 	GdkPixbuf *pixbuf = gdk_pixbuf_new_from_resource ( "/gres/recovery.png", NULL );
@@ -346,6 +500,23 @@ static void grecovery_win_create ( GRecoveryWin *win )
 
 	gtk_box_pack_start ( v_box, GTK_WIDGET ( grecovery_win_create_treeview_scroll ( win ) ), TRUE, TRUE, 0 );
 
+	win->gswitch = (GtkSwitch *)gtk_switch_new ();
+	gtk_widget_set_sensitive ( GTK_WIDGET ( win->gswitch  ), FALSE );
+
+	gtk_widget_set_visible ( GTK_WIDGET ( win->gswitch ), TRUE );
+	gtk_widget_set_tooltip_text ( GTK_WIDGET ( win->gswitch ), "Only Search" );
+	g_signal_connect ( win->gswitch, "notify::active", G_CALLBACK ( grecovery_win_switch_active ), win );
+
+	GtkExpander *expander = (GtkExpander *)gtk_expander_new ( "Details:" );
+	g_signal_connect ( expander, "notify::expanded", G_CALLBACK ( grecovery_win_expander_expanded ), win );
+
+	gtk_widget_set_visible ( GTK_WIDGET ( expander ), TRUE );
+	gtk_container_add ( GTK_CONTAINER ( expander ), GTK_WIDGET ( grecovery_win_create_treeview_file_scroll ( win ) ) );
+
+	gtk_box_pack_start ( h_box, GTK_WIDGET ( expander ), TRUE, TRUE, 0 );
+	gtk_box_pack_end   ( h_box, GTK_WIDGET ( win->gswitch ), FALSE, FALSE, 0 );
+	gtk_box_pack_start ( v_box, GTK_WIDGET ( h_box ), FALSE, FALSE, 0 );
+
 	win->prg_label = (GtkLabel *)gtk_label_new ( " " );
 	gtk_widget_set_halign ( GTK_WIDGET ( win->prg_label ), GTK_ALIGN_START );
 
@@ -372,6 +543,10 @@ static void grecovery_win_create ( GRecoveryWin *win )
 	gtk_widget_set_visible ( GTK_WIDGET ( win->entry_save ), TRUE );
 	gtk_box_pack_start ( v_box, GTK_WIDGET ( win->entry_save ), FALSE, FALSE, 0 );
 
+	h_box = (GtkBox *)gtk_box_new ( GTK_ORIENTATION_HORIZONTAL, 0 );
+	gtk_widget_set_visible ( GTK_WIDGET ( h_box ), TRUE );
+	gtk_box_set_spacing ( h_box, 5 );
+
 	grecovery_win_create_butttons ( h_box, win );
 	gtk_box_pack_end ( v_box, GTK_WIDGET ( h_box ), FALSE, FALSE, 0 );
 
@@ -383,7 +558,9 @@ static void grecovery_win_create ( GRecoveryWin *win )
 static void grecovery_win_init ( GRecoveryWin *win )
 {
 	win->src_update = 0;
+
 	win->recovery = recovery_new ();
+	g_signal_connect ( win->recovery, "recovery-set-file", G_CALLBACK ( grecovery_win_handler_set_file ), win );
 
 	grecovery_win_create ( win );
 	grecovery_win_disk_set ( win );

@@ -11,8 +11,6 @@
 
 #include <gtk/gtk.h>
 
-#define FORMATS_TYPE_WIN formats_win_get_type ()
-
 enum res_n
 {
 	SG_SAVE,
@@ -20,6 +18,8 @@ enum res_n
 	SG_RESTORE,
 	SG_ALL
 };
+
+#define FORMATS_TYPE_WIN formats_win_get_type ()
 
 G_DECLARE_FINAL_TYPE ( FormatsWin, formats_win, FORMATS, WIN, GtkWindow )
 

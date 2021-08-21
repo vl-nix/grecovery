@@ -1,7 +1,7 @@
 ### GRecovery
 
 * Data Recovery Utility
-* Base in [PhotoRec](https://www.cgsecurity.org)
+* Based in [PhotoRec](https://www.cgsecurity.org)
 
 
 #### Dependencies

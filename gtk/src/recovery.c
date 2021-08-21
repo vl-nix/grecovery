@@ -73,6 +73,7 @@ struct _Recovery
 	struct ph_param 	*params;
 	struct ph_options 	*options;
 
+	gboolean search_only;
 	gboolean recovery_done;
 	gboolean stop_recovery;
 };
@@ -147,6 +148,7 @@ static pstatus_t photorec_find_blocksize ( alloc_data_t *list_search_space, Reco
 
 	if ( current_search_space != list_search_space )
 		offset = current_search_space->start;
+
 	if ( recovery->options->verbose > 0 )
 		info_list_search_space ( list_search_space, current_search_space, recovery->params->disk->sector_size, 0, recovery->options->verbose );
 
@@ -184,7 +186,7 @@ static pstatus_t photorec_find_blocksize ( alloc_data_t *list_search_space, Reco
 						if ( ( file_check->length == 0 || memcmp ( buffer + file_check->offset, file_check->value, file_check->length ) == 0 ) &&
 							file_check->header_check ( buffer, read_size, 1, &file_recovery, &file_recovery_new ) != 0 )
 						{
-							file_recovery_new.file_stat=file_check->file_stat; break;
+							file_recovery_new.file_stat = file_check->file_stat; break;
 						}
 					}
 
@@ -206,11 +208,11 @@ static pstatus_t photorec_find_blocksize ( alloc_data_t *list_search_space, Reco
 			data_check_t res = DC_CONTINUE;
 
 			if ( file_recovery.data_check != NULL )
-				res = file_recovery.data_check ( buffer_olddata, 2*blocksize, &file_recovery );
+				res = file_recovery.data_check ( buffer_olddata, 2 * blocksize, &file_recovery );
 
 			file_recovery.file_size += blocksize;
 
-			if ( res==DC_STOP || res==DC_ERROR ) /* EOF found */
+			if ( res == DC_STOP || res == DC_ERROR ) /* EOF found */
 				reset_file_recovery ( &file_recovery );
 		}
 
@@ -224,9 +226,9 @@ static pstatus_t photorec_find_blocksize ( alloc_data_t *list_search_space, Reco
 			get_next_sector ( list_search_space, &current_search_space, &offset, blocksize );
 
 		if ( current_search_space == list_search_space ) /* End of disk found => EOF */
-			reset_file_recovery(&file_recovery);
+			reset_file_recovery ( &file_recovery );
 		else
-			recovery->params->offset=offset;
+			recovery->params->offset = offset;
 
 		buffer_olddata += blocksize;
 		buffer += blocksize;
@@ -267,7 +269,7 @@ static pstatus_t photorec_find_blocksize ( alloc_data_t *list_search_space, Reco
 					if ( recovery->stop_recovery )
 					{
 						log_info("PhotoRec has been stopped\n");
-						current_search_space=list_search_space;
+						current_search_space = list_search_space;
 					}
 				}
 			}
@@ -358,7 +360,7 @@ static pstatus_t photorec_aux ( alloc_data_t *list_search_space, Recovery *recov
 		{
 			/* try to skip ext2/ext3 indirect block */
 			if ( (recovery->params->status == STATUS_EXT2_ON || recovery->params->status == STATUS_EXT2_ON_SAVE_EVERYTHING ) &&
-				file_recovery.file_size >= 12*blocksize && ind_block(buffer,blocksize) != 0 )
+				file_recovery.file_size >= 12*blocksize && ind_block ( buffer, blocksize ) != 0 )
 			{
 				file_block_append ( &file_recovery, list_search_space, &current_search_space, &offset, blocksize, 0 );
 				data_check_status = DC_CONTINUE;
@@ -370,7 +372,7 @@ static pstatus_t photorec_aux ( alloc_data_t *list_search_space, Recovery *recov
 						(unsigned long)( (recovery->params->partition->part_size-1) / recovery->params->disk->sector_size) );
 				}
 
-				memcpy(buffer, buffer_olddata, blocksize);
+				memcpy ( buffer, buffer_olddata, blocksize );
 			}
 			else
 			{
@@ -407,6 +409,8 @@ static pstatus_t photorec_aux ( alloc_data_t *list_search_space, Recovery *recov
 					if ( data_check_status == DC_STOP )
 					{
 						if ( recovery->options->verbose > 1 ) log_trace ( "EOF found\n" );
+
+						g_signal_emit_by_name ( recovery, "recovery-set-file", recovery->params->file_nbr, file_recovery.filename, file_recovery.file_size, file_recovery.location.start );
 					}
 				}
 			}
@@ -502,7 +506,7 @@ static pstatus_t photorec_aux ( alloc_data_t *list_search_space, Recovery *recov
 				get_prev_location_smart ( list_search_space, &current_search_space, &offset, file_recovery.location.start );
 
 			if ( recovery->options->lowmem > 0 )
-				forget ( list_search_space,current_search_space );
+				forget ( list_search_space, current_search_space );
 		}
 
 		buffer_olddata += blocksize;
@@ -515,49 +519,48 @@ static pstatus_t photorec_aux ( alloc_data_t *list_search_space, Recovery *recov
 			else
 				memcpy ( buffer_start, buffer_olddata, blocksize );
 
-		buffer_olddata = buffer_start;
-		buffer = buffer_olddata + blocksize;
+			buffer_olddata = buffer_start;
+			buffer = buffer_olddata + blocksize;
 
-		if ( recovery->options->verbose > 1 )
-		{
-			log_verbose ( "Reading sector %10llu/%llu\n",
-				(unsigned long long)( (offset - recovery->params->partition->part_offset) / recovery->params->disk->sector_size ),
-				(unsigned long long)( (recovery->params->partition->part_size-1) / recovery->params->disk->sector_size) );
-		}
-
-		if ( recovery->params->disk->pread ( recovery->params->disk, buffer, READ_SIZE, offset ) != READ_SIZE )
-		{
-		}
-
-		if ( ind_stop == PSTATUS_OK )
-		{
-			const time_t current_time = time(NULL);
-
-			if ( current_time > previous_time )
+			if ( recovery->options->verbose > 1 )
 			{
-				recovery->params->offset = offset;
-				previous_time = current_time;
+				log_verbose ( "Reading sector %10llu/%llu\n",
+					(unsigned long long)( (offset - recovery->params->partition->part_offset) / recovery->params->disk->sector_size ),
+					(unsigned long long)( (recovery->params->partition->part_size-1) / recovery->params->disk->sector_size) );
+			}
 
-				while ( gtk_events_pending () ) gtk_main_iteration ();
+			if ( recovery->params->disk->pread ( recovery->params->disk, buffer, READ_SIZE, offset ) != READ_SIZE )
+			{
+			}
 
-				if ( recovery->stop_recovery )
+			if ( ind_stop == PSTATUS_OK )
+			{
+				const time_t current_time = time(NULL);
+
+				if ( current_time > previous_time )
 				{
-					log_info ( "GRecovery has been stopped\n" );
+					recovery->params->offset = offset;
+					previous_time = current_time;
 
-					file_recovery_aborted ( &file_recovery, recovery->params, list_search_space );
-					free(buffer_start);
+					while ( gtk_events_pending () ) gtk_main_iteration ();
 
-					return PSTATUS_STOP;
+					if ( recovery->stop_recovery )
+					{
+						log_info ( "GRecovery has been stopped\n" );
+
+						file_recovery_aborted ( &file_recovery, recovery->params, list_search_space );
+						free(buffer_start);
+
+						return PSTATUS_STOP;
+					}
+
+					if ( current_time >= next_checkpoint )
+						next_checkpoint = regular_session_save ( list_search_space, recovery->params, recovery->options, current_time );
 				}
-
-				if ( current_time >= next_checkpoint )
-					next_checkpoint = regular_session_save ( list_search_space, recovery->params, recovery->options, current_time );
 			}
 		}
-	}
 
-	file_recovered_old = file_recovered;
-
+		file_recovered_old = file_recovered;
 	}
 
 	free ( buffer_start );
@@ -598,7 +601,7 @@ static int photorec ( alloc_data_t *list_search_space, Recovery *recovery )
 					recovery->params->blocksize = find_blocksize ( list_search_space, recovery->params->disk->sector_size, &start_offset );
 				}
 
-				update_blocksize(recovery->params->blocksize, list_search_space, start_offset);
+				update_blocksize ( recovery->params->blocksize, list_search_space, start_offset );
 			}
 				break;
   
@@ -607,7 +610,7 @@ static int photorec ( alloc_data_t *list_search_space, Recovery *recovery )
 				break;
 
 			default:
-				ind_stop=photorec_aux ( list_search_space, recovery );
+				ind_stop = photorec_aux ( list_search_space, recovery );
 				break;
 		}
 
@@ -705,6 +708,11 @@ void recovery_search_update ( GtkLabel *prg_label, GtkProgressBar *prg_bar, Reco
 	}
 }
 
+void recovery_file_sector ( uint ind, const char *file, uint64_t sz, uint64_t sector, Recovery *recovery )
+{
+	g_message ( "%s:: Not Realize ", __func__ );
+}
+
 gboolean recovery_done ( Recovery *recovery )
 {
 	return recovery->recovery_done;
@@ -715,7 +723,7 @@ void recovery_stop ( Recovery *recovery )
 	recovery->stop_recovery = TRUE;
 }
 
-void recovery_search ( uint8_t ext2, uint8_t free_space, const char *dir, GtkWindow *window, Recovery *recovery )
+void recovery_search ( uint8_t ext2, uint8_t free_space, const char *dir, gboolean search_only, GtkWindow *window, Recovery *recovery )
 {
 	if ( recovery->selt_disk == NULL || recovery->selt_part == NULL ) { recovery_no_disk_warn ( window, recovery ); return; }
 
@@ -728,6 +736,7 @@ void recovery_search ( uint8_t ext2, uint8_t free_space, const char *dir, GtkWin
 
 	log_partition ( recovery->selt_disk, recovery->selt_part );
 
+	recovery->search_only = search_only;
 	recovery->options->mode_ext2 = ext2;
 
 	alloc_data_t list_search_space;
@@ -894,9 +903,8 @@ void recovery_set_list_disk ( GtkComboBoxText *combo, Recovery *recovery )
 	gtk_combo_box_text_append_text ( combo, "Add disk" );
 }
 
-static void recovery_save_list_formats ( GtkTreeView *treeview, Recovery *recovery )
+static void recovery_save_reset_restore_list_formats ( uint8_t num, GtkTreeView *treeview, Recovery *recovery )
 {
-	uint i = 0;
 	file_enable_t *file_enable;
 
 	GtkTreeIter iter;
@@ -904,50 +912,13 @@ static void recovery_save_list_formats ( GtkTreeView *treeview, Recovery *recove
 
 	if ( !gtk_tree_model_get_iter_first ( model, &iter ) ) return;
 
-	for ( i = 0, file_enable = array_file_enable; file_enable->file_hint != NULL; i++, file_enable++ )
-	{
-		gboolean set = FALSE;
-		gtk_tree_model_get ( model, &iter, 1, &set, -1 );
-
-		file_enable->enable = ( set ) ? 1 : 0;
-
-		if ( !gtk_tree_model_iter_next ( model, &iter ) ) break;
-	}
-}
-
-static void recovery_reset_list_formats ( GtkTreeView *treeview, Recovery *recovery )
-{
-	uint i = 0;
-	file_enable_t *file_enable;
-
-	GtkTreeIter iter;
-	GtkTreeModel *model = gtk_tree_view_get_model ( treeview );
-
-	if ( !gtk_tree_model_get_iter_first ( model, &iter ) ) return;
-
-	for ( i = 0, file_enable = array_file_enable; file_enable->file_hint != NULL; i++, file_enable++ )
-	{
-		gtk_list_store_set ( GTK_LIST_STORE ( model ), &iter, 1, FALSE, -1 );
-
-		if ( !gtk_tree_model_iter_next ( model, &iter ) ) break;
-	}
-}
-
-static void recovery_restore_list_formats ( GtkTreeView *treeview, Recovery *recovery )
-{
-	uint i = 0;
-	file_enable_t *file_enable;
-
-	GtkTreeIter iter;
-	GtkTreeModel *model = gtk_tree_view_get_model ( treeview );
-
-	if ( !gtk_tree_model_get_iter_first ( model, &iter ) ) return;
-
-	for ( i = 0, file_enable = array_file_enable; file_enable->file_hint != NULL; i++, file_enable++ )
+	for ( file_enable = array_file_enable; file_enable->file_hint != NULL; file_enable++ )
 	{
 		gboolean set = ( file_enable->file_hint->enable_by_default ) ? TRUE : FALSE;
 
-		gtk_list_store_set ( GTK_LIST_STORE ( model ), &iter, 1, set, -1 );
+		if ( num == SG_SAVE ) { gtk_tree_model_get ( model, &iter, 1, &set, -1 ); file_enable->enable = ( set ) ? 1 : 0; }
+		if ( num == SG_RESET ) gtk_list_store_set ( GTK_LIST_STORE ( model ), &iter, 1, FALSE, -1 );
+		if ( num == SG_RESTORE ) gtk_list_store_set ( GTK_LIST_STORE ( model ), &iter, 1, set, -1 );
 
 		if ( !gtk_tree_model_iter_next ( model, &iter ) ) break;
 	}
@@ -957,9 +928,7 @@ static void recovery_formats_win_handler ( FormatsWin *frmt, uint8_t num, GObjec
 {
 	GtkTreeView *treeview = GTK_TREE_VIEW ( obj );
 
-	if ( num == SG_SAVE ) recovery_save_list_formats ( treeview, recovery );
-	if ( num == SG_RESET ) recovery_reset_list_formats ( treeview, recovery );
-	if ( num == SG_RESTORE ) recovery_restore_list_formats ( treeview, recovery );
+	recovery_save_reset_restore_list_formats ( num, treeview, recovery );
 }
 
 void recovery_formats_win ( Recovery *recovery )
@@ -973,12 +942,9 @@ void recovery_formats_win ( Recovery *recovery )
 	for ( file_enable = array_file_enable; file_enable->file_hint != NULL; file_enable++ )
 	{
 		char descr[128];
-
-		sprintf ( descr, "%-4s %s",
-			( file_enable->file_hint->extension != NULL ? file_enable->file_hint->extension : "" ), file_enable->file_hint->description );
+		sprintf ( descr, "%-4s %s", ( file_enable->file_hint->extension != NULL ? file_enable->file_hint->extension : "" ), file_enable->file_hint->description );
 
 		gboolean set = ( file_enable->enable ) ? TRUE : FALSE;
-
 		formats_win_treeview_append ( i++, set, descr, frmt );
 	}
 }
@@ -1026,6 +992,7 @@ static void recovery_init ( Recovery *recovery )
     recovery->options->list_file_format = array_file_enable;
 	reset_array_file_enable ( recovery->options->list_file_format );
 
+	recovery->search_only = FALSE;
 	recovery->recovery_done = TRUE;
 	recovery->stop_recovery = FALSE;
 
@@ -1047,6 +1014,9 @@ static void recovery_class_init ( RecoveryClass *class )
 	GObjectClass *oclass = G_OBJECT_CLASS (class);
 
 	oclass->finalize = recovery_finalize;
+
+	g_signal_new ( "recovery-set-file", G_TYPE_FROM_CLASS ( class ), G_SIGNAL_RUN_FIRST, 0, NULL, NULL, NULL, 
+		G_TYPE_NONE, 4, G_TYPE_UINT, G_TYPE_STRING, G_TYPE_UINT64, G_TYPE_UINT64 );
 }
 
 Recovery * recovery_new ( void )

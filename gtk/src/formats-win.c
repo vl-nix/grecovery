@@ -141,7 +141,7 @@ static void formats_win_create ( FormatsWin *win )
 	GdkPixbuf *pixbuf = gdk_pixbuf_new_from_resource ( "/gres/recovery.png", NULL );
 
 	GtkWindow *window = GTK_WINDOW ( win );
-	// gtk_window_set_title ( window, "Formats" );
+	gtk_window_set_title ( window, " " );
 	gtk_window_set_default_size ( window, 500, 300 );
 	gtk_window_set_icon ( window, pixbuf );
 

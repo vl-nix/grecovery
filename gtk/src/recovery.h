@@ -25,10 +25,11 @@ void recovery_set_list_disk ( GtkComboBoxText *, Recovery * );
 void recovery_part_changed ( uint , uint , Recovery * );
 void recovery_set_list_part ( GtkTreeView *, Recovery * );
 
-void recovery_stop ( Recovery * );
-void recovery_search ( uint8_t , uint8_t , const char *, GtkWindow *, Recovery * );
 void recovery_search_update ( GtkLabel *, GtkProgressBar *, Recovery * );
+void recovery_search ( uint8_t , uint8_t , const char *, gboolean , GtkWindow *, Recovery * );
+void recovery_file_sector ( uint , const char *, uint64_t , uint64_t , Recovery * );
 
+void recovery_stop ( Recovery * );
 gboolean recovery_done ( Recovery * );
 gboolean recovery_add_disk ( const char *, Recovery * );
 
